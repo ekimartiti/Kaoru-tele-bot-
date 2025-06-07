@@ -1,0 +1,17 @@
+{
+  "dependencies": {
+    "fs": "^0.0.1-security",
+    "mongoose": "^8.15.1",
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "name": "tele",
+  "version": "1.0.0",
+  "description": "",
+  "main": "tele.js",
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
