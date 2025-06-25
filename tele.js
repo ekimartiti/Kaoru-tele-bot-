@@ -40,7 +40,6 @@ bot.getMe()
   .catch((err) => {
     console.error('❌ Gagal menginisialisasi bot:', err.message);
   });
-console.log(botUsername)
 // === Deteksi Error Saat Polling (umumnya karena token salah atau koneksi terputus) ===
 bot.on('polling_error', (err) => {
   console.error('📡 Polling error:', err.message);
@@ -120,18 +119,23 @@ async function rms() {
   const { gmailFreshStok, gmailBekas, ytbOnNotSold } = await cariStat();
 
   const teks = `
-**_READY GMAIL!!!_**
-*FRESH* Rp.1300  
-➡️ Stok: *${gmailFreshStok}*
-*BEKAS* Rp.500  
-➡️ Stok: *${gmailBekas}*
-*Trial YouTube* Rp.1600  
-➡️ Stok: *${ytbOnNotSold}*
+*📦 STOK GMAIL TERSEDIA*
 
-👌 Garansi 24 jam  
-Bot autoOrder: *@${botUsername}*
-Own: [@Eki_strZ](https://t.me/Eki_strZ)
-  `;
+🟢 *GMAIL FRESH* — Rp *1.300*  
+📌 Stok: *${gmailFreshStok}*
+
+🟠 *GMAIL BEKAS* — Rp *500*  
+📌 Stok: *${gmailBekas}*
+
+🔴 *TRIAL YOUTUBE* — Rp *1.600*  
+📌 Stok: *${ytbOnNotSold}*
+
+🛡️ *Garansi 24 Jam*
+
+📲 *Order Sekarang:*  
+🛒 Bot Auto Order: *@${botUsername}*  
+👑 Owner: [@Eki_strZ](https://t.me/Eki_strZ)
+`;
 
   return teks;
 }
@@ -362,7 +366,7 @@ bot.onText(/\/autopromooff/, (msg) => {
 // ========================================
 // Fungsi Ambil Email General
 // ========================================
-const ambilEmail = async (msg, match, tipe) => {
+const ambilEmail = async (msg, match, tipe, cek) => {
   const senderId = msg.chat.id;
 
   if (senderId !== ADMIN_CHAT_ID) {
@@ -422,11 +426,14 @@ const emails = await Email.find(filter).limit(jumlah);
     });
 
     const ids = emails.map(e => e._id);
+    fs.unlinkSync(filePath);
+if (cek == true ){
+    bot.sendMessage(senderId, `✅ ${emails.length} email ${tipe} berhasil diambil`)  
+}else{
     await Email.updateMany({ _id: { $in: ids } }, { $set: { soldStatus: 'sold' } });
 
-    fs.unlinkSync(filePath);
-
     bot.sendMessage(senderId, `✅ ${emails.length} email ${tipe} berhasil diambil & ditandai sebagai 'sold'.`);
+}
   } catch (err) {
     console.error(`❌ Gagal mengambil email ${tipe}:`, err);
     return bot.sendMessage(senderId, `❌ Gagal mengambil data email ${tipe}.`);
@@ -436,6 +443,10 @@ const emails = await Email.find(filter).limit(jumlah);
 bot.onText(/\/getemailfresh(?: (\d+))?/, (msg, match) => ambilEmail(msg, match, 'fresh'));
 bot.onText(/\/getemailbekas(?: (\d+))?/, (msg, match) => ambilEmail(msg, match, 'bekas'));
 bot.onText(/\/getemailyoutube(?: (\d+))?/, (msg, match) => ambilEmail(msg, match, 'youtube'));
+
+bot.onText(/\/gtef(?: (\d+))?/, (msg, match) => ambilEmail(msg, match, 'fresh', true));
+bot.onText(/\/gteb(?: (\d+))?/, (msg, match) => ambilEmail(msg, match, 'bekas', true));
+bot.onText(/\/gtey(?: (\d+))?/, (msg, match) => ambilEmail(msg, match, 'youtube', true));
 
 //notif
 const NotifGroup = require('./models/notifGroup');
@@ -718,16 +729,20 @@ reservedStock[produk] += jumlah;
 
   if (!feeResult.success) {
     await bot.sendMessage(chatId, '⚠️ Gagal membuat QR unik. Silakan coba beberapa saat lagi.');
-    return { status: false }; // atau bisa lempar error kalau kamu suka cara keras
+    return { status: false };
   }
 
   const { fee, totalAmount } = feeResult;
 
-  // Lanjut buat QRIS
-  let qrisData = codeqr.slice(0, -4);
-  const step1 = qrisData.replace("010211", "010212");
+  // Ubah QR
+  let qrisData = codeqr.slice(0, -4); // hapus CRC lama
+  const step1 = qrisData.replace("010211", "010212"); // jadikan QR dinamis
   const step2 = step1.split("5802ID");
-  const uang = "54" + ("0" + totalAmount.toString().length).slice(-2) + totalAmount + "5802ID";
+
+  // ✅ Perbaikan bagian nominal
+  const formattedAmount = (totalAmount * 100).toString(); // ke cent
+  const uang = "54" + ("0" + formattedAmount.length).slice(-2) + formattedAmount + "5802ID";
+
   const finalQrisString = step2[0] + uang + step2[1];
   const qrisWithCRC = finalQrisString + convertCRC16(finalQrisString);
 
@@ -848,7 +863,7 @@ fs.writeFileSync(filePath, emailList);
   user: callbackQuery.from,
   produk: order.produk,
   jumlah: order.jumlah,
-  total: totalAmount, // dari QR generator
+  total: qrisData.result.totalAmount, // dari QR generator
   waktu: new Date(),
   akun: emails.map(e => e.email) // yang dikirim ke pembeli
 }); 
