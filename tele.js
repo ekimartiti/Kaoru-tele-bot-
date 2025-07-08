@@ -10,6 +10,7 @@ const bot = new TelegramBot(token, { polling: true });
 const ADMIN_CHAT_ID = 6720891467;
 const autopromoFile = 'autopromo.json';
 const Email = require('./models/email');
+const getMutasiQris = require('./kaoruFunction/mutasi');
 
 let isAutoPromoOn = false;
 const User = require('./models/teleuser');
@@ -17,6 +18,10 @@ const Group = require('./models/group');
 const keyorkut = "466555517499822122457295OKCTAE0B76D3EA813EBAD2128FE153559C54"
 const merchant = "OK2457295"
 const codeqr = `00020101021126670016COM.NOBUBANK.WWW01189360050300000879140214206576903446780303UMI51440014ID.CO.QRIS.WWW0215ID20254096563650303UMI5204541153033605802ID5927WARUNG PIKK STORE OK24572956009BATU BARA61052125262070703A0163040C7F`
+const keycek = "8bdba486f2087137c22abd5f3988140d54da9e08db2b6812d6b5677a025c30c1"
+function escapeMarkdown(text = '') {
+  return text.replace(/([_*\[\]()~`>#+=|{}.!-])/g, '\\$1');
+}
 
 // === Cek dan Muat config.json ===
 let config = {};
@@ -270,25 +275,51 @@ Hubungi admin: [@Eki_strZ](https://t.me/Eki_strZ)
     });
 }
 });
-
+ 
 // === Perintah: Kirim Promo ke Semua User ===
 bot.onText(/\/sendpromot/, async (msg) => {
   const senderId = msg.chat.id;
-  if (senderId !== ADMIN_CHAT_ID) return bot.sendMessage(senderId, '❌ Kamu tidak punya akses.');
+  if (senderId !== ADMIN_CHAT_ID) {
+    return bot.sendMessage(senderId, '❌ Kamu tidak punya akses.');
+  }
+
   const users = await User.find();
-for (const user of users) {
-  const userId = user.chatId;
+  let success = 0;
+  let removed = 0;
+
+  for (const user of users) {
+    const userId = user.chatId;
+
     try {
-      const pesan = await rms();
+      const pesan = await rms(); // asumsi ini fungsi random promosi
       await bot.sendMessage(userId, pesan, { parse_mode: 'Markdown' });
+      success++;
     } catch (err) {
-      console.error(`Gagal kirim ke ${userId}:`, err.message);
+      console.error(`❌ Gagal kirim ke ${userId}:`, err.message);
+
+      // Hapus user jika error karena user tidak valid
+      if (
+        err.message.includes('Forbidden') ||
+        err.message.includes('chat not found')
+      ) {
+        await User.deleteOne({ chatId: userId });
+        removed++;
+        console.log(`🧹 User ${userId} dihapus dari database.`);
+      }
     }
   }
 
-  bot.sendMessage(senderId, `✅ Promo terkirim ke ${users.length} pengguna.`);
+  await bot.sendMessage(senderId, `✅ Promo terkirim ke ${success} pengguna.\n🧹 ${removed} user dihapus karena tidak valid.`);
 });
 
+bot.onText(/\/cekuser/, async (msg) => {
+  if (msg.chat.id !== ADMIN_CHAT_ID) return;
+
+  const count = await User.countDocuments();
+  bot.sendMessage(msg.chat.id, `📊 Total user aktif di database: *${count}*`, {
+    parse_mode: 'Markdown'
+  });
+});
 // === Perintah Broadcast Custom ===
 bot.onText(/\/broadcast (.+)/, async (msg, match) => {
   const senderId = msg.chat.id;
@@ -359,6 +390,36 @@ bot.onText(/\/autopromooff/, (msg) => {
   } else {
     saveAutoPromoState(false);
     bot.sendMessage(senderId, '🛑 Auto promo ke grup telah dimatikan.');
+  }
+});
+
+bot.onText(/\/cektoken/, async (msg) => {
+  const senderId = msg.chat.id;
+  if (senderId !== ADMIN_CHAT_ID) {
+    return bot.sendMessage(senderId, '❌ Kamu tidak punya akses.');
+  }
+
+  const { username, token } = config.orkut;
+  const OrderKuota = require('./kaoruFunction/orderKuota');
+  const akun = new OrderKuota(username, token);
+
+  try {
+    const res = await akun.getTransactionQris();
+
+    if (res?.account?.results?.username) {
+      const userInfo = res.account.results;
+      await bot.sendMessage(senderId, 
+        `✅ *Token Valid!*\n` +
+        `👤 Username: \`${userInfo.username}\`\n` +
+        `💰 Saldo QRIS: *${userInfo.qris_balance_str}*\n` +
+        `📛 Name: *${userInfo.name}*`, 
+        { parse_mode: 'Markdown' }
+      );
+    } else {
+      await bot.sendMessage(senderId, '⚠️ Token tidak valid atau sudah expired.');
+    }
+  } catch (err) {
+    await bot.sendMessage(senderId, `❌ Gagal cek token!\nError: ${err.message}`);
   }
 });
 
@@ -464,52 +525,147 @@ bot.onText(/\/notifikasion/, async (msg) => {
   }
 
   try {
+    // Pastikan tidak ada chatId duplikat lama yang mati
+    const existing = await NotifGroup.findOne({ chatId });
+
+    if (existing) {
+      return bot.sendMessage(chatId, 'ℹ️ Grup ini sudah terdaftar sebagai grup notifikasi.');
+    }
+
+    // Hapus entri dengan chatId lama (< -1000000000000)
+    await NotifGroup.deleteMany({ chatId: { $lt: -1000000000000 } });
+
+    // Tambahkan yang baru
     await NotifGroup.create({ chatId });
+
     bot.sendMessage(chatId, '✅ Grup ini telah diaktifkan sebagai *Grup Notifikasi Pembelian*.', {
       parse_mode: 'Markdown'
     });
+
   } catch (err) {
-    if (err.code === 11000) {
-      bot.sendMessage(chatId, 'ℹ️ Grup ini sudah terdaftar sebagai grup notifikasi.');
-    } else {
-      console.error(err);
-      bot.sendMessage(chatId, '❌ Gagal menyimpan grup notifikasi.');
-    }
+    console.error('❌ Error di /notifikasion:', err);
+    bot.sendMessage(chatId, '❌ Gagal menyimpan grup notifikasi.');
   }
 });
 
 async function kirimNotifikasiKeGrup({ user, produk, jumlah, total, waktu, akun }) {
-  try {
-    const notifGroups = await NotifGroup.find();
+  const escapeMD = (text = '') => String(text).replace(/([_*[\]()~`>#+=|{}.!-])/g, '\\$1');
 
-    const pesan = `
-📢 *PEMBELIAN BERHASIL*
-👤 Pembeli: [${user.first_name}](tg://user?id=${user.id})
-📦 Produk: *${produk}*
-🔢 Jumlah: *${jumlah}*
-💸 Total: *Rp${total.toLocaleString()}*
-🕰️ Waktu: *${waktu.toLocaleString()}*
+  const safeName = escapeMD(user.first_name || 'User');
+  const safeProduk = escapeMD(produk);
+  const safeJumlah = escapeMD(jumlah);
+  const safeTotal = escapeMD(`Rp${total.toLocaleString()}`);
+  const safeWaktu = escapeMD(waktu.toLocaleString());
+
+  // Escape isi akun juga agar aman
+  const akunList = akun.map(a => escapeMD(a)).join('\n');
+
+  const pesan = 
+`📢 *PEMBELIAN BERHASIL*
+👤 Pembeli: [${safeName}](tg://user?id=${user.id})
+📦 Produk: *${safeProduk}*
+🔢 Jumlah: *${safeJumlah}*
+💸 Total: *${safeTotal}*
+🕰️ Waktu: *${safeWaktu}*
 
 ✅ Akun Terkirim:
 \`\`\`
-${akun.join('\n')}
-\`\`\`
-`;
+${akunList}
+\`\`\``;
 
-    for (const group of notifGroups) {
+  const notifGroups = await NotifGroup.find();
+  let success = 0;
+  let failed = 0;
+
+  for (const group of notifGroups) {
+    try {
       await bot.sendMessage(group.chatId, pesan, { parse_mode: 'Markdown' });
+      success++;
+    } catch (err) {
+      failed++;
+      console.error(`❌ Gagal kirim ke grup ${group.chatId}:`, err.message);
     }
-  } catch (err) {
-    console.error('❌ Gagal kirim notifikasi ke grup:', err.message);
+  }
+
+  if (success === 0) {
+    try {
+      await bot.sendMessage(ADMIN_CHAT_ID, `⚠️ *Fallback Notifikasi!*\n\nSemua grup notifikasi gagal menerima pesan. Berikut isi pesan:\n\n${escapeMD(pesan)}`, {
+        parse_mode: 'Markdown'
+      });
+    } catch (err) {
+      console.error('❌ Gagal kirim fallback notifikasi ke admin:', err.message);
+    }
   }
 }
 
 bot.onText(/\/hapusnotifikasi/, async (msg) => {
   if (msg.from.id !== ADMIN_CHAT_ID) return;
-  await NotifGroup.deleteOne({ chatId: msg.chat.id });
-  bot.sendMessage(msg.chat.id, '🗑️ Grup ini tidak lagi menjadi grup notifikasi.');
+
+  try {
+    const result = await NotifGroup.deleteOne({ chatId: msg.chat.id });
+
+    if (result.deletedCount === 1) {
+      bot.sendMessage(msg.chat.id, '🗑️ Grup ini tidak lagi menjadi grup notifikasi.');
+    } else {
+      bot.sendMessage(msg.chat.id, '⚠️ Grup ini *tidak terdaftar* sebagai grup notifikasi (mungkin ID-nya berbeda).');
+    }
+  } catch (err) {
+    console.error('❌ Gagal hapus grup notifikasi:', err.message);
+    bot.sendMessage(msg.chat.id, '❌ Gagal menghapus grup notifikasi.');
+  }
+});
+bot.onText(/\/nl/, async (msg) => {
+  if (msg.chat.id !== ADMIN_CHAT_ID) return;
+
+  const groups = await NotifGroup.find();
+  const list = groups.map(g => `• \`${g.chatId}\``).join('\n') || 'Tidak ada grup terdaftar.';
+
+  bot.sendMessage(msg.chat.id, `📋 *Daftar Grup Notifikasi:*\n${list}`, { parse_mode: 'Markdown' });
+});
+bot.onText(/\/bersihkanGrupNotif/, async (msg) => {
+  if (msg.chat.id !== ADMIN_CHAT_ID) return;
+
+  const notifGroups = await NotifGroup.find();
+  let countDeleted = 0;
+
+  for (const group of notifGroups) {
+    try {
+      await bot.sendMessage(group.chatId, '🔍 Tes koneksi grup notifikasi');
+    } catch (err) {
+      if (
+        err.message.includes('upgraded to a supergroup') ||
+        err.message.includes('chat not found') ||
+        err.message.includes('Forbidden')
+      ) {
+        await NotifGroup.deleteOne({ chatId: group.chatId });
+        countDeleted++;
+        console.log(`🧹 Dihapus: ${group.chatId} karena error: ${err.message}`);
+      }
+    }
+  }
+
+  bot.sendMessage(msg.chat.id, `✅ Selesai membersihkan. Grup invalid dihapus: ${countDeleted}`);
 });
 
+async function validasiGrupNotifikasi() {
+  const notifGroups = await NotifGroup.find();
+  for (const group of notifGroups) {
+    try {
+      await bot.sendMessage(group.chatId, '🧪 Tes koneksi grup notifikasi');
+    } catch (err) {
+      if (
+        err.message.includes('upgraded') ||
+        err.message.includes('chat not found') ||
+        err.message.includes('Forbidden')
+      ) {
+        await NotifGroup.updateOne({ chatId: group.chatId }, { $set: { lastKnownStatus: 'dead' } });
+        await bot.sendMessage(ADMIN_CHAT_ID, `⚠️ Grup notifikasi ${group.chatId} sudah tidak valid. Harap gunakan /notifikasion ulang.`);
+      }
+    }
+  }
+}
+
+setInterval(validasiGrupNotifikasi, 6 * 60 * 60 * 1000); // Setiap 6 jam
 ///orderr
 const orderState = new Map(); // Menyimpan status order user
 global.pendingTransactions = {
@@ -519,6 +675,7 @@ const reservedStock = {
   'Gmail Bekas': 0,
   'Gmail Trial YouTube': 0
 };
+const reservedStockPerUser = new Map();
 
 function getAvailableStock(namaProduk, totalStok) {
   return totalStok - (reservedStock[namaProduk] || 0);
@@ -667,6 +824,11 @@ bot.on('callback_query', async (callbackQuery) => {
 
   // ➤ 4. Konfirmasi Order dan Kirim QRIS
   if (data === 'konfirmasi_order') {
+   if (reservedStockPerUser.has(userId)) {
+  const prev = reservedStockPerUser.get(userId);
+  reservedStock[prev.produk] -= prev.jumlah;
+  reservedStockPerUser.delete(userId);
+} 
 const order = orderState.get(userId);
 if (!order) return;
 
@@ -678,7 +840,16 @@ if (jumlah > stokTersedia) {
 }
 
 // ✅ Reserve stok
+// Bersihkan stok lama user (kalau ada)
+const prevReserved = reservedStockPerUser.get(userId);
+if (prevReserved) {
+  reservedStock[prevReserved.produk] -= prevReserved.jumlah;
+}
+
+// Tambahkan stok baru
 reservedStock[produk] += jumlah;
+reservedStockPerUser.set(userId, { produk, jumlah });
+
 
     try {
       const { produk, jumlah } = order;
@@ -708,7 +879,7 @@ reservedStock[produk] += jumlah;
       const totalAmount = baseAmount + fee;
 
       // Cek apakah amount ini sudah ada di mutasi
-      const res = await axios.get(`https://gateway.okeconnect.com/api/mutasi/qris/${merchant}/${keyorkut}`);
+      const res = await getMutasiQris();
       const isDuplicate = res.data?.data?.some(tx => tx.amount === totalAmount && tx.type === "CR");
 
       if (!isDuplicate) {
@@ -729,20 +900,16 @@ reservedStock[produk] += jumlah;
 
   if (!feeResult.success) {
     await bot.sendMessage(chatId, '⚠️ Gagal membuat QR unik. Silakan coba beberapa saat lagi.');
-    return { status: false };
+    return { status: false }; // atau bisa lempar error kalau kamu suka cara keras
   }
 
   const { fee, totalAmount } = feeResult;
 
-  // Ubah QR
-  let qrisData = codeqr.slice(0, -4); // hapus CRC lama
-  const step1 = qrisData.replace("010211", "010212"); // jadikan QR dinamis
+  // Lanjut buat QRIS
+  let qrisData = codeqr.slice(0, -4);
+  const step1 = qrisData.replace("010211", "010212");
   const step2 = step1.split("5802ID");
-
-  // ✅ Perbaikan bagian nominal
-  const formattedAmount = (totalAmount * 100).toString(); // ke cent
-  const uang = "54" + ("0" + formattedAmount.length).slice(-2) + formattedAmount + "5802ID";
-
+  const uang = "54" + ("0" + totalAmount.toString().length).slice(-2) + totalAmount + "5802ID";
   const finalQrisString = step2[0] + uang + step2[1];
   const qrisWithCRC = finalQrisString + convertCRC16(finalQrisString);
 
@@ -811,24 +978,29 @@ if (!qrisData.status) return; // Stop kalau gagal
 if (!txn) return;
 
 const { produk, jumlah } = txn;
-            const res = await axios.get(`https://gateway.okeconnect.com/api/mutasi/qris/${merchant}/${keyorkut}`);
+            const res = await getMutasiQris();
             const match = res.data?.data?.find(tx =>
               tx.amount == qrisData.result.totalAmount && tx.type === "CR");
             if (match) {
               clearInterval(txn.checkInterval);
               await bot.deleteMessage(chatId, photoMsg.message_id);
-await bot.sendMessage(chatId, `✅ *PEMBAYARAN BERHASIL!*\n\n` +
-`👤 *Nama Pembeli*    : ${callbackQuery.from.first_name || 'Tidak diketahui'}\n` +
-`🆔 *Telegram ID*     : ${userId}\n` +
-`📦 *Pesanan*         : ${jumlah}x ${produk}\n` +
-`🧾 *Kode Transaksi*  : ${qrisData.result.kodeTransaksi}\n` +
-`💰 *Harga Satuan*    : Rp ${(qrisData.result.baseAmount / jumlah).toLocaleString('id-ID')}\n` +
-`➕ *Fee Unik*         : Rp ${qrisData.result.fee.toLocaleString('id-ID')}\n` +
-`💳 *Total Bayar*     : Rp ${qrisData.result.totalAmount.toLocaleString('id-ID')}\n` +
-`⏱️ *Waktu Bayar*     : ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n\n` +
-`📤 *Produk akan segera dikirim...*`, {
-  parse_mode: 'Markdown'
-});
+const namaPembeli = escapeMarkdown(callbackQuery.from.first_name || 'Tidak diketahui');
+const kodeTransaksi = escapeMarkdown(qrisData.result.kodeTransaksi);
+
+await bot.sendMessage(chatId,
+  `✅ *PEMBAYARAN BERHASIL!*\n\n` +
+  `👤 *Nama Pembeli*    : ${namaPembeli}\n` +
+  `🆔 *Telegram ID*     : ${userId}\n` +
+  `📦 *Pesanan*         : ${jumlah}x ${escapeMarkdown(produk)}\n` +
+  `🧾 *Kode Transaksi*  : ${kodeTransaksi}\n` +
+  `💰 *Harga Satuan*    : Rp ${(qrisData.result.baseAmount / jumlah).toLocaleString('id-ID')}\n` +
+  `➕ *Fee Unik*         : Rp ${qrisData.result.fee.toLocaleString('id-ID')}\n` +
+  `💳 *Total Bayar*     : Rp ${qrisData.result.totalAmount.toLocaleString('id-ID')}\n` +
+  `⏱️ *Waktu Bayar*     : ${escapeMarkdown(new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }))}\n\n` +
+  `📤 *Produk akan segera dikirim...*`,
+  { parse_mode: 'Markdown' }
+);
+
               //kirim email
               try{
     const stat = await cariStat();
@@ -867,9 +1039,11 @@ fs.writeFileSync(filePath, emailList);
   waktu: new Date(),
   akun: emails.map(e => e.email) // yang dikirim ke pembeli
 }); 
-    await Email.updateMany({ _id: { $in: ids } }, { $set: { soldStatus: 'sold' } });
+//    await Email.updateMany({ _id: { $in: ids } }, { $set: { soldStatus: 'sold' } });
 reservedStock[produk] -= jumlah;
+reservedStockPerUser.delete(userId);
     fs.unlinkSync(filePath);
+    
 
   } catch (err) {
     console.error(`❌ Gagal mengambil email ${produk}:`, err);
@@ -883,6 +1057,7 @@ reservedStock[produk] -= jumlah;
 
             if (Date.now() - txn.startTime > 10 * 60000) {
             reservedStock[produk] -= jumlah;  
+            reservedStockPerUser.delete(userId);
               clearInterval(txn.checkInterval);
               await bot.deleteMessage(chatId, photoMsg.message_id);
               await bot.sendMessage(chatId, `❌ Pembayaran kadaluarsa. Silakan ulangi pemesanan.`);

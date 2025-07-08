@@ -1,2 +1,7 @@
-{ "mongoKey":"mongodb+srv://kleeladimin:balebale@ekidb.lczqgls.mongodb.net/?retryWrites=true&w=majority&appName=Ekidb"
+{
+  "mongoKey": "mongodb+srv://kleeladimin:balebale@ekidb.lczqgls.mongodb.net/?retryWrites=true&w=majority&appName=Ekidb",
+  "orkut": {
+    "username": "dimasgempik",
+    "token": "2457295:364nWOStAmeQZ5GDd0HhLwjBaI7VpyPx"
+  }
 }
